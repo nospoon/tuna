@@ -1,0 +1,32 @@
+[package]
+name = "tuna"
+version = "0.1.0"
+edition = "2021"
+default-run = "tuna"
+description = "Tuna — low-frequency-grade guitar/bass tuner for Windows"
+license = "MIT"
+
+[dependencies]
+cpal = "0.18.2"
+egui = "0.37.0"
+eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "system_fonts", "glow", "clipboard", "links"] }
+rtrb = "0.4.1"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.2.2"
+dirs = "7.0.0"
+png = { version = "0.18", optional = true }
+
+[features]
+# Builds the in-app TUNA_SCREENSHOT_TO capture used by the visual
+# verification step: it grabs a *settled* repaint, which eframe's own
+# pass-2 screenshot hook cannot do.
+screenshot = ["dep:png"]
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
