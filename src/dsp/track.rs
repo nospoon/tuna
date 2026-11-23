@@ -52,6 +52,10 @@ pub enum Hint {
 #[derive(Clone, Copy, Debug)]
 pub struct Reading {
     pub t_ms: u64,
+    /// Analysis window this hop actually used, in ms. It shrinks once the
+    /// tracker is locked above `F_TRACK_SHORT_HZ` (`N_MAX` -> `N_TRACK`), so
+    /// the display quotes this rather than a constant derived from `N_MAX`.
+    pub window_ms: u32,
     /// Smoothed frequency, derived from `cents` so the two can never disagree.
     pub f_hz: f32,
     pub cents: f32,

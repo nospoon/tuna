@@ -17,7 +17,6 @@ pub const HOP: usize = 512;
 
 pub const YIN_THRESHOLD: f32 = 0.10;
 pub const CLARITY_ACCEPT: f32 = 0.45;
-pub const CLARITY_GOOD: f32 = 0.70;
 pub const LOCK_CONFIRM: usize = 3;
 pub const NOTE_CHANGE_CONFIRM: usize = 6;
 pub const OUTLIER_CENTS: f32 = 120.0;
@@ -26,18 +25,19 @@ pub const LOCK_CONFIRM_CENTS: f32 = 35.0;
 
 pub const GATE_AUTO_MARGIN_DB: f32 = 10.0;
 pub const GATE_HYSTERESIS_DB: f32 = 4.0;
-pub const USER_FLOOR_DEFAULT_DB: f32 = -60.0;
+/// Absolute floor of the gate: the auto gate never opens below this.
+pub const GATE_FLOOR_DB: f32 = -60.0;
 /// Noise-floor upward creep, dB per hop (~4.7 dB/s).
 pub const FLOOR_RISE_DB_PER_HOP: f32 = 0.05;
 pub const RMS_SMOOTH_S: f32 = 0.050;
-pub const NOISE_HOLD_MS: u64 = 500;
 pub const CLIP_HOLD_MS: u64 = 1000;
 
 /// Above this frequency the short tracking frame is used (its 4096-sample
 /// window still holds >2 periods of 55 Hz).
 pub const F_TRACK_SHORT_HZ: f32 = 55.0;
 /// Shortest correlation length a frame must be able to offer.
-pub const W_MIN: usize = 1024;
+#[cfg(test)]
+const W_MIN: usize = 1024;
 pub const WEAK_FUND_RATIO: f32 = 0.25;
 const DB_FLOOR: f32 = -160.0;
 
@@ -67,8 +67,6 @@ pub struct Analyzer {
     clip_hops: u64,
     clip_hold_len: u64,
 
-    auto_gate: bool,
-    user_floor_db: f32,
     a4: f32,
     tuning: Vec<u8>,
     pinned: Option<usize>,
@@ -95,13 +93,11 @@ impl Analyzer {
             rms_db: DB_FLOOR,
             peak_db: DB_FLOOR,
             rms_db_smooth: DB_FLOOR,
-            floor_db: USER_FLOOR_DEFAULT_DB,
-            gate_db: USER_FLOOR_DEFAULT_DB,
+            floor_db: GATE_FLOOR_DB,
+            gate_db: GATE_FLOOR_DB,
             gate_open: false,
             clip_hops: 0,
             clip_hold_len: (CLIP_HOLD_MS as f32 / hop_dur_ms).ceil() as u64,
-            auto_gate: true,
-            user_floor_db: USER_FLOOR_DEFAULT_DB,
             a4: crate::model::notes::A4_DEFAULT,
             tuning: Vec::new(),
             pinned: None,
@@ -126,11 +122,6 @@ impl Analyzer {
     }
     pub fn reading(&self) -> Option<Reading> {
         self.last
-    }
-    pub fn clarity_good(&self) -> bool {
-        self.last
-            .map(|r| r.clarity >= CLARITY_GOOD)
-            .unwrap_or(false)
     }
 
     pub fn set_a4(&mut self, a4: f32) {
@@ -158,11 +149,6 @@ impl Analyzer {
     pub fn set_smoothing(&mut self, tau_ms: f32) {
         self.tau_smooth_ms = tau_ms.max(10.0);
     }
-    pub fn set_gate(&mut self, auto: bool, floor_db: f32) {
-        self.auto_gate = auto;
-        self.user_floor_db = floor_db;
-        self.gate_db = self.compute_gate();
-    }
     pub fn gate_state(&self) -> (f32, f32, bool) {
         (self.gate_db, self.floor_db, self.gate_open)
     }
@@ -182,7 +168,7 @@ impl Analyzer {
         self.rms_db = DB_FLOOR;
         self.peak_db = DB_FLOOR;
         self.rms_db_smooth = DB_FLOOR;
-        self.floor_db = USER_FLOOR_DEFAULT_DB;
+        self.floor_db = GATE_FLOOR_DB;
         self.gate_open = false;
         self.clip_hops = 0;
         self.tracker = Tracker::new();
@@ -191,12 +177,13 @@ impl Analyzer {
         self.gate_db = self.compute_gate();
     }
 
+    /// One gate policy: auto. The tracked noise floor plus a margin, never
+    /// allowed below `GATE_FLOOR_DB` so a quiet room cannot drop the gate
+    /// under the noise it is meant to reject. There is no manual gate: nothing
+    /// in the UI or the CLI ever set one, and an unreachable second policy is
+    /// a second set of numbers to keep honest.
     fn compute_gate(&self) -> f32 {
-        if self.auto_gate {
-            (self.floor_db + GATE_AUTO_MARGIN_DB).max(self.user_floor_db)
-        } else {
-            self.user_floor_db
-        }
+        (self.floor_db + GATE_AUTO_MARGIN_DB).max(GATE_FLOOR_DB)
     }
 
     /// Analysis frame for this hop: long while acquiring or while locked below
@@ -280,6 +267,7 @@ impl Analyzer {
         // itself, and a competing tone (mains hum) then drags the reading off
         // the note instead of being averaged out.
         let w = n - self.pitch.tau_range().1;
+        let win_ms = (n as f32 * 1000.0 / self.fs).round() as u32;
         let frame = &self.hist[N_MAX - n..];
         let pinned_f = self
             .pinned
@@ -347,6 +335,7 @@ impl Analyzer {
 
         let r = Reading {
             t_ms,
+            window_ms: win_ms,
             f_hz: out.f_hz,
             cents: out.cents,
             clarity,
@@ -448,6 +437,48 @@ mod tests {
             "{:?}",
             tail.iter().map(|r| r.state).collect::<Vec<_>>()
         );
+    }
+
+    /// The reading carries the window that produced it so the display can say
+    /// what actually ran. Acquiring, and any lock below `F_TRACK_SHORT_HZ`,
+    /// correlate `N_MAX` (171 ms at 48 kHz); a lock above it drops to
+    /// `N_TRACK` (85 ms) to halve display latency. The chip used to print a
+    /// constant derived from `N_MAX` and lied for every note above A1.
+    #[test]
+    fn the_reading_reports_the_window_it_actually_used() {
+        let fs = 48_000.0;
+        let long_ms = (N_MAX as f32 * 1000.0 / fs).round() as u32;
+        let short_ms = (N_TRACK as f32 * 1000.0 / fs).round() as u32;
+
+        let mut a = Analyzer::new(fs);
+        let mut seen = Vec::new();
+        for chunk in tone(fs, 110.0, 4_800 * 3).chunks(HOP) {
+            if let Some(r) = a.process_hop(chunk) {
+                seen.push((r.state, r.window_ms));
+            }
+        }
+        assert_eq!(
+            seen[0].1,
+            long_ms,
+            "acquiring runs the long frame: {:?}",
+            seen[0]
+        );
+        let last = seen[seen.len() - 1];
+        assert_eq!(last.0, TrackState::Locked, "{last:?}");
+        assert_eq!(
+            last.1, short_ms,
+            "locked at 110 Hz must run the short frame: {last:?}"
+        );
+
+        // F1 stays on the long frame: a short one cannot hold enough periods
+        // of it, which is the whole reason two frame lengths exist.
+        let mut b = Analyzer::new(fs);
+        for chunk in tone(fs, 43.65, 4_800 * 3).chunks(HOP) {
+            b.process_hop(chunk);
+        }
+        let r = b.reading().unwrap();
+        assert_eq!(r.state, TrackState::Locked, "43.65 Hz must lock");
+        assert_eq!(r.window_ms, long_ms, "43.65 Hz keeps the long frame");
     }
 
     #[test]

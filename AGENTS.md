@@ -53,7 +53,7 @@ All from `D:\tuna`; PowerShell for `build.ps1`.
 
 ```powershell
 cargo build --release                      # dev build; dev profile has opt-level = 1
-cargo test                                 # all 42 tests
+cargo test                                 # all 44 tests
 cargo test --release                       # REQUIRED for DSP tests (93.8 analyses/s over multi-second fixtures)
 cargo test --test dsp                      # integration tests only (also --test model)
 cargo run --release -- --list-devices      # verify capture stack / device ids
@@ -102,9 +102,9 @@ Screenshot verification (own feature, **not** eframe's): `cargo build --release 
 
 ## Testing & QA
 
-Plain `std` `#[test]`, zero dev-dependencies, 42 tests total:
+Plain `std` `#[test]`, zero dev-dependencies, 44 tests total:
 
-- **Inline** `#[cfg(test)] mod tests` in nearly every module (30 tests): units close to the math — biquad, gate/floor, pitch grid (`grid_is_ascending_lag` pins exact τ bounds), tracker rules, config, presets, notes, CLI parsing, WAV round-trip, synth determinism.
+- **Inline** `#[cfg(test)] mod tests` in nearly every module (32 tests): units close to the math — biquad, gate/floor, pitch grid (`grid_is_ascending_lag` pins exact τ bounds), tracker rules, the analysis window a `Reading` reports (85 ms locked above 55 Hz, 171 ms below), the state-chip string built from it, config, presets, notes, CLI parsing, WAV round-trip, synth determinism.
 - **Integration** `tests/dsp.rs` (9): end-to-end `Analyzer` regressions — every fixture "is one the tuner used to get wrong": B0 lock/stillness, F1 accuracy, lock latency not growing with pitch, weak-fundamental no-octave-up, hum immunity, WrongPreset hint, silence gating, sinusoidal drift tracking.
 - **Integration** `tests/model.rs` (3): 8-string presets, low-note naming, bit-identical numbers under spelling flip.
 

@@ -257,7 +257,7 @@ fn tolerance_row(ui: &mut Ui, c: &mut Controls<'_>, ch: &mut Changed) {
 fn smoothing_row(ui: &mut Ui, c: &mut Controls<'_>, ch: &mut Changed) {
     ui.label(RichText::new("needle").size(13.0).color(MUTED));
     let before = c.cfg.smoothing;
-    for s in [Smoothing::Fast, Smoothing::Normal, Smoothing::Slow] {
+    for s in Smoothing::ALL {
         if ui
             .add(egui::Button::selectable(c.cfg.smoothing == s, s.label()))
             .clicked()

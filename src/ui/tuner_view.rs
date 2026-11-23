@@ -39,8 +39,6 @@ pub struct View<'a> {
     pub target: TargetMode,
     pub tolerance: f32,
     pub in_tune: bool,
-    /// Analysis window length in ms, quoted in the `Locked 171 ms` chip.
-    pub frame_ms: u32,
     /// Overrides the state chip when capture itself is the story
     /// (`Disconnected`, `Recovering`).
     pub status: Option<&'a str>,
@@ -361,7 +359,12 @@ fn state_chip(v: &View<'_>) -> (String, Color32) {
         TrackState::NoSignal => ("No signal".into(), MUTED),
         TrackState::Acquiring => ("Acquiring".into(), MUTED),
         TrackState::Unstable => ("Unstable".into(), WARNING),
-        TrackState::Locked => (format!("Locked {} {} ms", DOT, v.frame_ms), SUCCESS),
+        // The window the analyzer actually ran this hop: `N_TRACK`, not
+        // `N_MAX`, whenever it is locked above `F_TRACK_SHORT_HZ`.
+        TrackState::Locked => match v.reading {
+            Some(r) => (format!("Locked {} {} ms", DOT, r.window_ms), SUCCESS),
+            None => ("Locked".into(), SUCCESS),
+        },
     }
 }
 
@@ -390,4 +393,59 @@ fn hint_line(ui: &mut Ui, v: &View<'_>) {
     };
     ui.add_space(2.0);
     ui.label(RichText::new(text).size(16.0).color(MUTED));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dsp::harmonics::NH;
+
+    fn view(reading: Option<Reading>) -> View<'static> {
+        View {
+            reading,
+            tuning: &[],
+            spelling: Spelling::Sharp,
+            a4: 440.0,
+            target: TargetMode::Auto,
+            tolerance: 3.0,
+            in_tune: false,
+            status: None,
+        }
+    }
+
+    /// The state chip is the only place the analysis window is visible, so it
+    /// has to come from the reading in front of it: locked at 110 Hz the
+    /// analyzer correlated 4 096 samples (85 ms), locked on F1 it correlated
+    /// 8 192 (171 ms). A constant here advertised the long frame for every
+    /// note above A1.
+    #[test]
+    fn the_locked_chip_quotes_the_window_of_its_reading() {
+        let locked = Reading {
+            t_ms: 1_000,
+            window_ms: 85,
+            f_hz: 110.0,
+            cents: 0.0,
+            clarity: 0.9,
+            state: TrackState::Locked,
+            target_midi: Some(45),
+            rms_db: -20.0,
+            peak_db: -14.0,
+            gate_db: -60.0,
+            clipped: false,
+            harmonic_amps: [0.0; NH],
+            hint: None,
+        };
+        assert_eq!(
+            state_chip(&view(Some(locked))).0,
+            format!("Locked {DOT} 85 ms")
+        );
+        let bass = Reading {
+            window_ms: 171,
+            ..locked
+        };
+        assert_eq!(
+            state_chip(&view(Some(bass))).0,
+            format!("Locked {DOT} 171 ms")
+        );
+    }
 }

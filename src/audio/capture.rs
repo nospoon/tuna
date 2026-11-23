@@ -48,7 +48,6 @@ pub struct Shared {
     /// Frames handed to the callback since the stream started: the UI's
     /// "is data still arriving" watchdog.
     pub frames: Arc<AtomicU64>,
-    pub dropped: Arc<AtomicU64>,
 }
 
 impl Shared {
@@ -110,8 +109,6 @@ pub struct StartParams {
     pub tuning: Vec<u8>,
     pub pinned: Option<usize>,
     pub smoothing_ms: f32,
-    pub auto_gate: bool,
-    pub gate_floor_db: f32,
     /// Requested repaint after publishing a reading; None for headless runs.
     pub ctx: Option<egui::Context>,
 }
@@ -122,7 +119,6 @@ struct Sink {
     sel: usize,
     channels: usize,
     scratch: Vec<f32>,
-    dropped: Arc<AtomicU64>,
     frames: Arc<AtomicU64>,
 }
 
@@ -155,11 +151,11 @@ impl Sink {
             }
             self.scratch[f] = v;
         }
-        let (_pushed, remainder) = self.prod.push_partial_slice(&self.scratch[..frames]);
-        if !remainder.is_empty() {
-            self.dropped
-                .fetch_add(remainder.len() as u64, Ordering::Relaxed);
-        }
+        // A full ring is not an error: the worker trims the backlog, so what
+        // falls off the end here is audio the analyser already chose to skip.
+        // Its evidence is the "dropped N samples to keep up" log line in the
+        // worker, so there is no second counter to keep in sync.
+        let _ = self.prod.push_partial_slice(&self.scratch[..frames]);
         self.frames.fetch_add(frames as u64, Ordering::Relaxed);
     }
 }
@@ -194,7 +190,6 @@ impl Capture {
             sel,
             channels,
             scratch: Vec::new(),
-            dropped: Arc::clone(&shared.dropped),
             frames: Arc::clone(&shared.frames),
         };
 
@@ -323,7 +318,6 @@ fn worker(
     an.set_tuning(&p.tuning);
     an.set_pinned(p.pinned);
     an.set_smoothing(p.smoothing_ms);
-    an.set_gate(p.auto_gate, p.gate_floor_db);
 
     let mut hop = vec![0.0f32; HOP];
     let mut trash = vec![0.0f32; 1024];
@@ -343,9 +337,6 @@ fn worker(
                 }
                 left -= n;
             }
-            shared
-                .dropped
-                .fetch_add((avail - HOP) as u64, Ordering::Relaxed);
             if last_trim.elapsed() > Duration::from_secs(2) {
                 last_trim = Instant::now();
                 shared.diagnose(format!(

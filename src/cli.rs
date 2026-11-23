@@ -1,5 +1,6 @@
-//! Hand-rolled flags: no argument-parsing dependency. `main.rs` (GUI) and
-//! `app.rs` (which may re-read them) share this `Flags` struct.
+//! Hand-rolled flags: no argument-parsing dependency. `main.rs` folds them
+//! into `AppConfig`, then either runs `analyse_wav` offline, prints a headless
+//! CSV, or hands the merged config to the GUI.
 
 use std::path::{Path, PathBuf};
 
@@ -184,7 +185,6 @@ pub fn analyse_wav(path: &Path, cfg: &AppConfig, tuning: &[u8]) -> Result<Offlin
     an.set_tuning(tuning);
     an.set_pinned(cfg.pinned_string);
     an.set_smoothing(cfg.smoothing.tau_ms());
-    an.set_gate(cfg.auto_gate, cfg.gate_floor_db);
     let mut hp = HighPassBank::new(fs as f32, 1);
     let mut buf = vec![0.0f32; HOP];
     let mut readings = Vec::new();
@@ -243,8 +243,6 @@ pub fn run_live_csv(cfg: &AppConfig, tuning: &[u8], seconds: f32) -> Result<(), 
         tuning: tuning.to_vec(),
         pinned: cfg.pinned_string,
         smoothing_ms: cfg.smoothing.tau_ms(),
-        auto_gate: cfg.auto_gate,
-        gate_floor_db: cfg.gate_floor_db,
         ctx: None,
     };
     let mut cap = Capture::start(&shared, &dev, &scfg, &p)?;

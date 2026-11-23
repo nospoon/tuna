@@ -53,8 +53,6 @@ pub struct AppConfig {
     pub spelling: Spelling,
     pub tolerance_cents: f32,
     pub smoothing: Smoothing,
-    pub auto_gate: bool,
-    pub gate_floor_db: f32,
 }
 
 impl Default for AppConfig {
@@ -69,8 +67,6 @@ impl Default for AppConfig {
             spelling: Spelling::Sharp,
             tolerance_cents: 3.0,
             smoothing: Smoothing::Normal,
-            auto_gate: true,
-            gate_floor_db: -60.0,
         }
     }
 }
@@ -82,7 +78,6 @@ impl AppConfig {
         }
         self.custom_tuning.sort_unstable();
         self.a4_hz = self.a4_hz.clamp(435.0, 455.0);
-        self.gate_floor_db = self.gate_floor_db.clamp(-120.0, 0.0);
         self.tolerance_cents = self.tolerance_cents.clamp(1.0, 50.0);
         if crate::model::presets::preset_by_id(&self.preset).is_none() {
             self.preset = "chromatic".to_string();

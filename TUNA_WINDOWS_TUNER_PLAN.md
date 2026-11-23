@@ -131,7 +131,7 @@ pub struct Reading {
 }
 ```
 
-**Geometry (fixed constants, in `dsp/frame.rs`):** `N_MAX = 8192`, `HOP = 512` samples (10.7 ms at 48 kHz → 93.8 analyses/s), `YIN_THRESHOLD = 0.10`, `CLARITY_ACCEPT = 0.45`, `CLARITY_GOOD = 0.70`, `LOCK_CONFIRM = 3` frames, `NOTE_CHANGE_CONFIRM = 6` frames, `OUTLIER_CENTS = 120.0`, `GATE_AUTO_MARGIN_DB = 10.0`, `GATE_HYSTERESIS_DB = 4.0`, `NOISE_HOLD_MS = 500`.
+**Geometry (fixed constants, in `dsp/frame.rs`):** `N_MAX = 8192`, `N_TRACK = 4096`, `HOP = 512` samples (10.7 ms at 48 kHz → 93.8 analyses/s), `YIN_THRESHOLD = 0.10`, `CLARITY_ACCEPT = 0.45`, `LOCK_CONFIRM = 3` frames, `NOTE_CHANGE_CONFIRM = 6` frames, `OUTLIER_CENTS = 120.0`, `GATE_AUTO_MARGIN_DB = 10.0`, `GATE_HYSTERESIS_DB = 4.0`, `GATE_FLOOR_DB = -60.0`.
 
 `hist` is a 8192-sample linear buffer with `copy_within(HOP.., 0)` then the new hop appended; analysis reads the tail only. `copy_within` at 93.8 hops/s ≈ 3 MB/s of memcpy — irrelevant, and it keeps the code allocation-free and trivially correct.
 
@@ -139,7 +139,7 @@ pub struct Reading {
 `fc = 20.0 Hz`, `Q = 0.7071`, coefficients recomputed only when `fs` or `fc` change:
 `w0 = 2π·fc/fs`, `α = sin(w0)/(2Q)`, `b0 = (1+cos w0)/2`, `b1 = -(1+cos w0)`, `b2 = b0`, `a0 = 1+α`, `a1 = -2·cos w0`, `a2 = 1-α`; divide all by `a0`. Removes DC rumble and sub-audible interface noise without touching F1/B0 magnitude (at 30 Hz the 20 Hz HP costs < 0.5 dB).
 
-**b. Level + gate** (per hop, on the selected channel's filtered samples): `peak = max|x|`, `rms = sqrt(Σx²/HOP)`, dBFS with `-160.0` floor for silence. Smooth RMS with `α = 1 - exp(-hop_dur/0.050)`. Noise floor tracker: `if rms_db < floor_db { floor_db = rms_db } else { floor_db = min(rms_db, floor_db + 0.05) }` (follows down instantly, recovers upward at 0.05 dB/hop ≈ 4.7 dB/s). Gate open level `gate_db = if auto_gate { max(floor_db + GATE_AUTO_MARGIN_DB, user_floor_db) } else { user_floor_db }` with `user_floor_db` default `-60.0`; gate opens at `gate_db`, closes below `gate_db - 4.0` (hysteresis). `clipped = any(|x| ≥ 0.999)`, held 1 s.
+**b. Level + gate** (per hop, on the selected channel's filtered samples): `peak = max|x|`, `rms = sqrt(Σx²/HOP)`, dBFS with `-160.0` floor for silence. Smooth RMS with `α = 1 - exp(-hop_dur/0.050)`. Noise floor tracker: `if rms_db < floor_db { floor_db = rms_db } else { floor_db = min(rms_db, floor_db + 0.05) }` (follows down instantly, recovers upward at 0.05 dB/hop ≈ 4.7 dB/s). Gate open level `gate_db = max(floor_db + GATE_AUTO_MARGIN_DB, GATE_FLOOR_DB)` — auto only, `GATE_FLOOR_DB = -60.0` is the level the gate may never open below; there is no manual gate knob (nothing in the UI or CLI ever set one). Gate opens at `gate_db`, closes below `gate_db - 4.0` (hysteresis). `clipped = any(|x| ≥ 0.999)`, held 1 s.
 
 **c. Pitch — grid YIN + local refinement** (`pitch.rs`). Difference function on the frame tail of length `N`: `d(τ) = Σ_{n<W} (x[n] − x[n+τ])²`, with
 
@@ -156,7 +156,7 @@ Refinement, because the 100-cent coarse grid is far coarser than a cent: `Δ = m
 
 **e. Tracker** (`track.rs`) — this is where "no floating" comes from. Order exactly:
 
-1. If the gate is closed: `NoSignal`; the UI keeps the last reading dimmed for `NOISE_HOLD_MS`, then clears.
+1. If the gate is closed: `NoSignal`; the tracker stops publishing, so the UI keeps showing the last good reading (dimmed) until the gate reopens. There is no timed hold: a held glyph cannot drift, which is the point.
 2. `clarity < CLARITY_ACCEPT` → `Unstable`; **freeze the smoother** (the needle stops moving instead of sliding toward noise — the single most important anti-floating rule).
 3. 3-point median of `f_raw` (shift register).
 4. Not yet locked: `Acquiring`; lock when 3 consecutive medians agree within ±35 ¢ of each other; `f_center = median3`, `target_midi = freq_to_midi(f_center, a4).round()` clamped to `midi_to_freq ∈ [PITCH_FLOOR_HZ, PITCH_CEIL_HZ]`, or — pinned-string mode — `target_midi = preset.midi[i]`.
@@ -209,9 +209,9 @@ CLI, parsed by hand in `main.rs` (no clap): `--list-devices` (per input device: 
 **Central panel**, top→bottom:
 
 1. **String chips row** (preset modes only): one small button per string labelled `F♯1` … `E4` in the current spelling, current target `ACCENT`-outlined; clicking pins that string as the target (`TargetMode::Pinned(i)` → the ±120 ¢ restricted search, the strongest anti-floating mode); an `Auto` chip returns to `TargetMode::Auto`. Row hidden in `chromatic`.
-2. **Note glyph**: letter `FontId::proportional(150.0)`, accidental `96.0`, octave `72.0`, baseline-aligned via `Align2::LEFT_BASELINE` on a shared `baseline_y`. Colour: `SUCCESS` when in tune (hysteresis per step 3.8), `FG` when locked and off, 40 %-alpha `MUTED` during the `NOISE_HOLD_MS` hold, nothing in `Idle`. Right of it, `MUTED` 18 px: `target F♯1 · 46.25 Hz`.
+2. **Note glyph**: letter `FontId::proportional(150.0)`, accidental `96.0`, octave `72.0`, baseline-aligned via `Align2::LEFT_BASELINE` on a shared `baseline_y`. Colour: `SUCCESS` when in tune (hysteresis per step 3.8), `FG` when locked and off, 40 %-alpha `MUTED` while the reading is held (`Unstable`, `No signal`, `Acquiring` — the analyzer froze it), nothing in `Idle`. Right of it, `MUTED` 18 px: `target F♯1 · 46.25 Hz`.
 3. **Cent meter** (`tuner_view.rs`, custom painted, min height 120 px, panel width): range `±50 ¢`; dead band `|c| ≤ tolerance` filled `SUCCESS` at 12 % alpha; centre line 2 px `FG`; minor ticks every 5 ¢, major every 10 ¢ labelled `−50 −25 0 +25 +50` with a trailing `¢`; `FLAT` / `SHARP` in `MUTED` at the ends. Needle = 5 px rounded bar, height 0.8·panel, `SUCCESS`/`WARNING` by state, 1 px `BG` outline so it reads over the dead band; `|cents| > 50` pins it to the edge and draws a chevron while the numeric readout keeps the true value (clamped ±1200 ¢).
-4. **Readout row**, `FontId::monospace(30.0)` so digits cannot jitter horizontally: `41.20 Hz`, `−4.3 ¢`, and a state chip `Locked · 171 ms` / `Acquiring` / `Unstable` / `No signal` / `Disconnected`.
+4. **Readout row**, `FontId::monospace(30.0)` so digits cannot jitter horizontally: `41.20 Hz`, `−4.3 ¢`, and a state chip `Locked · 171 ms` / `Acquiring` / `Unstable` / `No signal` / `Disconnected`. The `ms` is `Reading::window_ms` — the frame that hop actually ran (171 ms below 55 Hz, 85 ms above), never a constant derived from `N_MAX`.
 5. **Hint line**, 16 px `MUTED`, from `Reading::hint`: `Signal below gate (−62.4 dBFS) — raise interface gain` / `Clipping — lower interface gain` / `Fundamental weak: strongest harmonic h=3 — check input/impedance` / `Measured pitch is 12 semitones below F♯1 — wrong tuning selected?`.
 
 **Repaint policy**: `ctx.request_repaint_after(Duration::from_millis(16))` while the gate is open, `250 ms` when idle. In `--wav` mode the offline pass must run **before the first paint**, so the window — and the screenshot check in Verification — shows the settled state.
@@ -234,8 +234,6 @@ pub struct AppConfig {
     pub spelling: Spelling,         // "sharp" | "flat", default Sharp
     pub tolerance_cents: f32,       // 1.0 | 3.0 | 5.0, default 3.0
     pub smoothing: Smoothing,       // fast | normal | slow, default normal
-    pub auto_gate: bool,            // default true
-    pub gate_floor_db: f32,         // default -60.0, used when auto_gate = false and as auto clamp floor
 }
 ```
 

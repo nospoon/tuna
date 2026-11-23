@@ -13,7 +13,6 @@ use std::time::{Duration, Instant};
 use crate::audio::capture::{AudioStatus, Capture, Shared, StartParams};
 use crate::audio::device::{self, Inventory};
 use crate::cli::Offline;
-use crate::dsp::frame::N_MAX;
 use crate::dsp::track::{Reading, TrackState};
 use crate::model::config::AppConfig;
 use crate::model::presets::{preset_by_id, tuning_for};
@@ -45,8 +44,6 @@ struct Sig {
     tuning: Vec<u8>,
     pinned: Option<usize>,
     smoothing_ms: f32,
-    auto_gate: bool,
-    gate_floor_db: f32,
 }
 
 pub struct TunaApp {
@@ -71,8 +68,6 @@ pub struct TunaApp {
     clip_until: Option<Instant>,
     peak_db: f32,
     last_tick: Option<Instant>,
-    /// Analysis window length, quoted in the `Locked 171 ms` chip.
-    frame_ms: u32,
     /// Dev-only paint counter behind `TUNA_SCREENSHOT_TO`.
     #[cfg(feature = "screenshot")]
     paints: u32,
@@ -106,8 +101,6 @@ impl TunaApp {
                 tuning: Vec::new(),
                 pinned: None,
                 smoothing_ms: -1.0,
-                auto_gate: false,
-                gate_floor_db: 0.0,
             },
             sig_since: None,
             last_status: AudioStatus::Idle,
@@ -118,7 +111,6 @@ impl TunaApp {
             clip_until: None,
             peak_db: FLOOR_DB,
             last_tick: None,
-            frame_ms: frame_ms(48_000.0),
             #[cfg(feature = "screenshot")]
             paints: 0,
         };
@@ -141,7 +133,6 @@ impl TunaApp {
             .unwrap_or_default();
         match &app.offline {
             Some(o) => {
-                app.frame_ms = frame_ms(o.fs as f32);
                 app.shared.diagnose(format!(
                     "offline file: {} Hz {} ch {}",
                     o.fs, o.channels, o.format
@@ -181,8 +172,6 @@ impl TunaApp {
             tuning,
             pinned,
             smoothing_ms: self.cfg.smoothing.tau_ms(),
-            auto_gate: self.cfg.auto_gate,
-            gate_floor_db: self.cfg.gate_floor_db,
         }
     }
 
@@ -210,8 +199,6 @@ impl TunaApp {
             tuning: tuning_for(&self.cfg.preset, &self.cfg.custom_tuning),
             pinned: self.target.index(),
             smoothing_ms: self.cfg.smoothing.tau_ms(),
-            auto_gate: self.cfg.auto_gate,
-            gate_floor_db: self.cfg.gate_floor_db,
             ctx: Some(ctx.clone()),
         };
         match self.open_stream(&p) {
@@ -234,7 +221,6 @@ impl TunaApp {
     /// needs to name the format WASAPI actually granted.
     fn open_stream(&mut self, p: &StartParams) -> Result<(String, u32, u16, String), String> {
         let (dev, scfg, label) = device::open(&self.cfg.device_id)?;
-        self.frame_ms = frame_ms(scfg.sample_rate() as f32);
         let info = (
             scfg.sample_rate(),
             scfg.channels(),
@@ -480,7 +466,6 @@ impl eframe::App for TunaApp {
                 target: controls.target,
                 tolerance: controls.cfg.tolerance_cents,
                 in_tune: self.in_tune,
-                frame_ms: self.frame_ms,
                 status: status_line,
             };
             egui::CentralPanel::default()
@@ -579,8 +564,4 @@ impl TunaApp {
             Some(_) => {}
         }
     }
-}
-
-fn frame_ms(fs: f32) -> u32 {
-    (N_MAX as f32 * 1000.0 / fs.max(1.0)).round() as u32
 }

@@ -15,7 +15,6 @@ fn analyse(x: &[f32], fs: u32, cfg: &AppConfig, tuning: &[u8]) -> Vec<Reading> {
     an.set_tuning(tuning);
     an.set_pinned(cfg.pinned_string);
     an.set_smoothing(cfg.smoothing.tau_ms());
-    an.set_gate(cfg.auto_gate, cfg.gate_floor_db);
     let mut hp = HighPassBank::new(fs as f32, 1);
     let mut buf = vec![0.0f32; HOP];
     let mut rows = Vec::new();

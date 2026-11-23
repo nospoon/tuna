@@ -134,8 +134,7 @@ impl Pitch {
 
         // Cumulative-mean normalisation, ascending lag.
         let mut cum = 0.0f32;
-        for (j, &gi) in self.cand.iter().enumerate() {
-            let _ = gi;
+        for (j, _) in self.cand.iter().enumerate() {
             cum += self.d[j];
             let mean = cum / (j as f32 + 1.0);
             self.dnorm[j] = if mean > 1e-20 { self.d[j] / mean } else { 1.0 };
@@ -156,22 +155,16 @@ impl Pitch {
             pick = Some(0);
         }
         // Otherwise the global minimum, only if the frame is periodic at all.
-        let chosen = match pick {
-            Some(j) => Some(j),
-            None => {
+        let chosen = pick
+            .or_else(|| {
                 let mut g = 0usize;
                 for j in 1..m {
                     if self.dnorm[j] < self.dnorm[g] {
                         g = j;
                     }
                 }
-                if self.dnorm[g] < FALLBACK_LIMIT {
-                    Some(g)
-                } else {
-                    None
-                }
-            }
-        }?;
+                (self.dnorm[g] < FALLBACK_LIMIT).then_some(g)
+            })?;
 
         let tau_k = self.taus[self.cand[chosen]];
         let cmndf = self.dnorm[chosen];
