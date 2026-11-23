@@ -1,0 +1,7 @@
+# Sources are LF on disk and in the index. Global core.autocrlf=true would
+# otherwise rewrite every .rs to CRLF on checkout.
+* text=auto eol=lf
+*.zip binary
+*.png binary
+*.wav binary
+*.exe binary
