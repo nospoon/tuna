@@ -20,6 +20,7 @@ tuna — guitar/bass tuner
 
   tuna                       start the GUI on the default input
   --list-devices             print capture devices and exit
+  --list-presets             print tuning ids and exit
   --device <substr>          device id or case-insensitive name fragment
   --channel <n>              0-based input channel
   --preset <id>              see --list-presets

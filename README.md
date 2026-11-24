@@ -146,4 +146,4 @@ painting. Those are checked by hand per the protocol in
 
 ## License
 
-MIT, as declared in `Cargo.toml`. There is no `LICENSE` file in the repo yet.
+MIT — see [LICENSE](LICENSE), and `license = "MIT"` in `Cargo.toml`.
